@@ -1,19 +1,21 @@
-from microtensor.nn import Neuron
+from microtensor.nn import MLP
 
-# 1. Initialize a Neuron that expects 2 inputs
-n = Neuron(2)
+# 1. Initialize a Neural Network
+# 3 inputs, two hidden layers of 4 neurons, 1 output neuron
+n = MLP(3, [4, 4, 1])
 
-# 2. Define 2 inputs
-x = [2.0, 3.0]
+# 2. Define an input vector
+x = [2.0, 3.0, -1.0]
 
-# 3. Forward pass (Calculate the output)
+# 3. Forward pass (Calculate the final prediction)
 out = n(x)
 
-# 4. Backward pass (Calculate the gradients for the weights and bias)
+# 4. Backward pass (Calculate gradients for every single parameter in the network)
 out.backward()
 
 # 5. Interrogate the network
-print(f"Neuron Output: {out.data}")
-print(f"Weight 0 Gradient: {n.w[0].grad}")
-print(f"Weight 1 Gradient: {n.w[1].grad}")
-print(f"Bias Gradient: {n.b.grad}")
+print(f"Network Output: {out.data}")
+print(f"Total parameters in network: {len(n.parameters())}")
+
+# Let's look at the gradient of a random weight in the first layer
+print(f"Sample Weight Gradient (Layer 0, Neuron 0, Weight 0): {n.layers[0].neurons[0].w[0].grad}")
