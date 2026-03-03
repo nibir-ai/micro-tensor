@@ -70,21 +70,24 @@ class MaxPool2d(Module):
 class Flatten(Module):
     def __call__(self, x): return x.reshape((x.data.shape[0], -1))
 
+class MLP(Module):
+    def __init__(self, nin, nouts):
+        sz = [nin] + nouts
+        self.layers = [Linear(sz[i], sz[i+1]) for i in range(len(nouts))]
+    def __call__(self, x):
+        for layer in self.layers:
+            x = layer(x).tanh()
+        return x
+    def parameters(self): return [p for layer in self.layers for p in layer.parameters()]
+
 def cross_entropy(logits, target_indices):
-    # Numerical stability: subtract max(logits)
     max_val = Tensor(np.max(logits.data, axis=1, keepdims=True))
     logits_stable = logits - max_val
-    
-    # LogSumExp
     sum_exp = logits_stable.exp().sum(axis=1, keepdims=True)
     log_sum_exp = sum_exp.log()
-    
-    # Negative Log Likelihood
     log_probs = logits_stable - log_sum_exp
-    
     N = logits.data.shape[0]
     target_one_hot = np.zeros_like(logits.data)
     target_one_hot[np.arange(N), target_indices] = 1.0
-    
     loss = (Tensor(target_one_hot) * log_probs).sum() * (-1.0 / N)
     return loss
