@@ -18,76 +18,127 @@ class Linear(Module):
         return out
     def parameters(self): return [self.w] + ([self.b] if self.b else [])
 
-class Conv2d(Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
-        self.in_channels, self.out_channels = in_channels, out_channels
-        self.kernel_size, self.stride, self.padding = kernel_size, stride, padding
-        scale = np.sqrt(2.0 / (in_channels * kernel_size**2))
-        self.weight = Tensor(np.random.randn(out_channels, in_channels, kernel_size, kernel_size) * scale)
-        self.bias = Tensor(np.zeros((1, out_channels, 1, 1)))
-
+class LayerNorm(Module):
+    def __init__(self, dim, eps=1e-5):
+        self.eps = eps
+        self.gamma = Tensor(np.ones((1, 1, dim)))
+        self.beta = Tensor(np.zeros((1, 1, dim)))
     def __call__(self, x):
-        N, C, H, W = x.data.shape
-        K, S, P = self.kernel_size, self.stride, self.padding
-        x_pad = np.pad(x.data, ((0,0), (0,0), (P,P), (P,P)), mode='constant') if P > 0 else x.data
-        out_h = (H + 2*P - K) // S + 1
-        out_w = (W + 2*P - K) // S + 1
-        
-        shape = (N, C, out_h, out_w, K, K)
-        strides = (x_pad.strides[0], x_pad.strides[1], S*x_pad.strides[2], S*x_pad.strides[3], x_pad.strides[2], x_pad.strides[3])
-        patches = np.lib.stride_tricks.as_strided(x_pad, shape=shape, strides=strides)
-        
-        input_matrix = Tensor(patches.transpose(0, 2, 3, 1, 4, 5).reshape(N, out_h*out_w, -1))
-        kernels = self.weight.reshape((self.out_channels, -1))
-        res = input_matrix @ kernels.transpose(1, 0)
-        out = res.transpose(0, 2, 1).reshape((N, self.out_channels, out_h, out_w))
-        return out + self.bias
-    def parameters(self): return [self.weight, self.bias]
+        mean = x.mean(axis=-1, keepdims=True)
+        var = ((x - mean)**2).mean(axis=-1, keepdims=True)
+        x_hat = (x - mean) / (var + self.eps)**0.5
+        return self.gamma * x_hat + self.beta
+    def parameters(self): return [self.gamma, self.beta]
 
-class MaxPool2d(Module):
-    def __init__(self, kernel_size, stride=None):
-        self.kernel_size = kernel_size
-        self.stride = stride if stride is not None else kernel_size
-    def __call__(self, x):
-        N, C, H, W = x.data.shape
-        K, S = self.kernel_size, self.stride
-        out_h, out_w = H // S, W // S
-        shape = (N, C, out_h, out_w, K, K)
-        strides = (x.data.strides[0], x.data.strides[1], S*x.data.strides[2], S*x.data.strides[3], x.data.strides[2], x.data.strides[3])
-        patches = np.lib.stride_tricks.as_strided(x.data, shape=shape, strides=strides)
-        res_data = np.max(patches, axis=(4, 5))
-        out = Tensor(res_data, (x,), 'maxpool')
-        def _backward():
-            mask = (patches == res_data[:, :, :, :, None, None])
-            grad_expanded = out.grad[:, :, :, :, None, None] * mask
-            for i in range(out_h):
-                for j in range(out_w):
-                    x.grad[:, :, i*S:i*S+K, j*S:j*S+K] += grad_expanded[:, :, i, j, :, :]
+class Embedding(Module):
+    def __init__(self, vocab_size, embed_dim):
+        self.weight = Tensor(np.random.randn(vocab_size, embed_dim) * 0.1)
+    def __call__(self, indices):
+        idx = np.array(indices)
+        out = Tensor(self.weight.data[idx], (self.weight,), 'embedding')
+        def _backward(): np.add.at(self.weight.grad, idx, out.grad)
         out._backward = _backward
         return out
-    def parameters(self): return []
+    def parameters(self): return [self.weight]
+
+class PositionalEncoding(Module):
+    def __init__(self, max_seq_len, embed_dim):
+        pe = np.zeros((max_seq_len, embed_dim))
+        position = np.arange(max_seq_len).reshape(-1, 1)
+        div_term = np.exp(np.arange(0, embed_dim, 2) * -(np.log(10000.0) / embed_dim))
+        pe[:, 0::2], pe[:, 1::2] = np.sin(position * div_term), np.cos(position * div_term)
+        self.pe = Tensor(pe)
+    def __call__(self, x): return x + self.pe.data[:x.data.shape[1], :]
+
+class MultiHeadAttention(Module):
+    def __init__(self, embed_dim, num_heads):
+        self.embed_dim, self.num_heads = embed_dim, num_heads
+        self.head_dim = embed_dim // num_heads
+        self.q_proj = Linear(embed_dim, embed_dim)
+        self.k_proj = Linear(embed_dim, embed_dim)
+        self.v_proj = Linear(embed_dim, embed_dim)
+        self.out_proj = Linear(embed_dim, embed_dim)
+    def __call__(self, x):
+        N, L, D = x.data.shape
+        H, d_k = self.num_heads, self.head_dim
+        q = self.q_proj(x).reshape((N, L, H, d_k)).transpose(0, 2, 1, 3)
+        k = self.k_proj(x).reshape((N, L, H, d_k)).transpose(0, 2, 1, 3)
+        v = self.v_proj(x).reshape((N, L, H, d_k)).transpose(0, 2, 1, 3)
+        scores = (q @ k.transpose(0, 1, 3, 2)) * (1.0 / np.sqrt(d_k))
+        exp_scores = (scores - Tensor(np.max(scores.data, axis=-1, keepdims=True))).exp()
+        probs = exp_scores / exp_scores.sum(axis=-1, keepdims=True)
+        context = (probs @ v).transpose(0, 2, 1, 3).reshape((N, L, D))
+        return self.out_proj(context)
+    def parameters(self):
+        return self.q_proj.parameters() + self.k_proj.parameters() + self.v_proj.parameters() + self.out_proj.parameters()
+
+class TransformerBlock(Module):
+    def __init__(self, embed_dim, num_heads, ff_dim):
+        self.attn = MultiHeadAttention(embed_dim, num_heads)
+        self.ln1 = LayerNorm(embed_dim)
+        self.ln2 = LayerNorm(embed_dim)
+        self.ff = MLP(embed_dim, [ff_dim, embed_dim])
+    def __call__(self, x):
+        x = self.ln1(x + self.attn(x))
+        x = self.ln2(x + self.ff(x))
+        return x
+    def parameters(self):
+        return self.attn.parameters() + self.ln1.parameters() + self.ln2.parameters() + self.ff.parameters()
+
+class LanguageModel(Module):
+    def __init__(self, vocab_size, embed_dim, num_heads, ff_dim, num_layers, max_seq_len):
+        self.token_emb = Embedding(vocab_size, embed_dim)
+        self.pos_emb = PositionalEncoding(max_seq_len, embed_dim)
+        self.blocks = [TransformerBlock(embed_dim, num_heads, ff_dim) for _ in range(num_layers)]
+        self.ln_f = LayerNorm(embed_dim)
+        self.head = Linear(embed_dim, vocab_size)
+        self.max_seq_len = max_seq_len
+
+    def __call__(self, idx):
+        x = self.token_emb(idx)
+        x = self.pos_emb(x)
+        for block in self.blocks: x = block(x)
+        x = self.ln_f(x)
+        return self.head(x)
+
+    def generate(self, idx, max_new_tokens):
+        # idx is (1, T) array of indices
+        for _ in range(max_new_tokens):
+            # Crop to max_seq_len
+            idx_cond = idx[:, -self.max_seq_len:]
+            # Forward to get logits
+            logits = self(idx_cond)
+            # Focus only on the last time step
+            logits = logits.data[:, -1, :] # (1, Vocab)
+            # Sample (Greedy for now)
+            next_idx = np.argmax(logits, axis=-1, keepdims=True)
+            # Append to sequence
+            idx = np.concatenate([idx, next_idx], axis=1)
+        return idx
+
+    def parameters(self):
+        params = self.token_emb.parameters() + self.head.parameters() + self.ln_f.parameters()
+        for block in self.blocks: params += block.parameters()
+        return params
+
+class MLP(Module):
+    def __init__(self, nin, nouts):
+        self.layers = [Linear(nin, nouts[0])] + [Linear(nouts[i], nouts[i+1]) for i in range(len(nouts)-1)]
+    def __call__(self, x):
+        for layer in self.layers: x = layer(x).tanh()
+        return x
+    def parameters(self): return [p for l in self.layers for p in l.parameters()]
 
 class Flatten(Module):
     def __call__(self, x): return x.reshape((x.data.shape[0], -1))
 
-class MLP(Module):
-    def __init__(self, nin, nouts):
-        sz = [nin] + nouts
-        self.layers = [Linear(sz[i], sz[i+1]) for i in range(len(nouts))]
-    def __call__(self, x):
-        for layer in self.layers:
-            x = layer(x).tanh()
-        return x
-    def parameters(self): return [p for layer in self.layers for p in layer.parameters()]
-
 def cross_entropy(logits, target_indices):
-    max_val = Tensor(np.max(logits.data, axis=1, keepdims=True))
-    logits_stable = logits - max_val
-    sum_exp = logits_stable.exp().sum(axis=1, keepdims=True)
-    log_sum_exp = sum_exp.log()
-    log_probs = logits_stable - log_sum_exp
-    N = logits.data.shape[0]
-    target_one_hot = np.zeros_like(logits.data)
-    target_one_hot[np.arange(N), target_indices] = 1.0
-    loss = (Tensor(target_one_hot) * log_probs).sum() * (-1.0 / N)
-    return loss
+    N, L, V = logits.data.shape
+    logits_flat = logits.reshape((N * L, V))
+    targets_flat = target_indices.flatten()
+    max_val = Tensor(np.max(logits_flat.data, axis=1, keepdims=True))
+    logits_stable = logits_flat - max_val
+    log_probs = logits_stable - logits_stable.exp().sum(axis=1, keepdims=True).log()
+    target_one_hot = np.zeros_like(logits_flat.data)
+    target_one_hot[np.arange(N*L), targets_flat] = 1.0
+    return (Tensor(target_one_hot) * log_probs).sum() * (-1.0 / (N * L))
