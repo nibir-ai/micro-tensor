@@ -1,17 +1,19 @@
-from microtensor.engine import Value
+from microtensor.nn import Neuron
 
-# 1. Forward Pass
-a = Value(2.0, label='a')
-b = Value(-3.0, label='b')
-c = Value(10.0, label='c')
+# 1. Initialize a Neuron that expects 2 inputs
+n = Neuron(2)
 
-e = a * b; e.label = 'e'
-d = e + c; d.label = 'd'
+# 2. Define 2 inputs
+x = [2.0, 3.0]
 
-# 2. Automated Backward Pass
-d.backward()
+# 3. Forward pass (Calculate the output)
+out = n(x)
 
-# 3. Interrogate the gradients
-print(f"Gradient of c: {c.grad} (Expected: 1.0)")
-print(f"Gradient of a: {a.grad} (Expected: -3.0)")
-print(f"Gradient of b: {b.grad} (Expected: 2.0)")
+# 4. Backward pass (Calculate the gradients for the weights and bias)
+out.backward()
+
+# 5. Interrogate the network
+print(f"Neuron Output: {out.data}")
+print(f"Weight 0 Gradient: {n.w[0].grad}")
+print(f"Weight 1 Gradient: {n.w[1].grad}")
+print(f"Bias Gradient: {n.b.grad}")
