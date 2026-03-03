@@ -1,21 +1,24 @@
+from microtensor.nn_tensor import MLP
 from microtensor.tensor import Tensor
 
-# Predictions (Shape 2,1)
-y_pred = Tensor([[0.8], 
-                 [-0.5]])
+# 1. Initialize Vectorized Network
+# 3 inputs, two hidden layers of 4, 1 output layer
+model = MLP(3, [4, 4, 1])
 
-# Targets (Shape 2,1)
-y_true = Tensor([[1.0], 
-                 [-1.0]])
+# 2. Define a single input as a (1, 3) matrix
+x = Tensor([[2.0, 3.0, -1.0]]) 
 
-# Calculate Mean Squared Error using our new operations
-# Loss = sum((y_pred - y_true) ** 2)
-diff = y_pred - y_true
-sq = diff ** 2
-loss = sq.sum()
+# 3. Forward Pass
+out = model(x)
 
-# Trigger backprop
-loss.backward()
+# 4. Backward Pass
+out.backward()
 
-print(f"Total Loss:\n{loss.data}")
-print(f"\nGradient of y_pred (How much should predictions change?):\n{y_pred.grad}")
+print("Vectorized Network Output (Shape 1,1):")
+print(out.data)
+
+print("\nFirst Layer Weight Matrix Shape:")
+print(model.layers[0].w.data.shape)
+
+print("\nFirst Layer Weight Gradients (Should be fully populated):")
+print(model.layers[0].w.grad)
