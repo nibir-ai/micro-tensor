@@ -28,17 +28,17 @@ class Conv2d(Module):
 
     def __call__(self, x):
         N, C, H, W = x.data.shape
-        K = self.kernel_size
-        out_h = (H + 2*self.padding - K) // self.stride + 1
-        out_w = (W + 2*self.padding - K) // self.stride + 1
+        K, S, P = self.kernel_size, self.stride, self.padding
+        x_pad = np.pad(x.data, ((0,0), (0,0), (P,P), (P,P)), mode='constant') if P > 0 else x.data
+        out_h = (H + 2*P - K) // S + 1
+        out_w = (W + 2*P - K) // S + 1
+        
+        shape = (N, C, out_h, out_w, K, K)
+        strides = (x_pad.strides[0], x_pad.strides[1], S*x_pad.strides[2], S*x_pad.strides[3], x_pad.strides[2], x_pad.strides[3])
+        patches = np.lib.stride_tricks.as_strided(x_pad, shape=shape, strides=strides)
+        
+        input_matrix = Tensor(patches.transpose(0, 2, 3, 1, 4, 5).reshape(N, out_h*out_w, -1))
         kernels = self.weight.reshape((self.out_channels, -1))
-        patches = []
-        for i in range(out_h):
-            for j in range(out_w):
-                h_s, w_s = i * self.stride, j * self.stride
-                patch = x.data[:, :, h_s:h_s+K, w_s:w_s+K].reshape(N, -1)
-                patches.append(patch)
-        input_matrix = Tensor(np.array(patches)).transpose(1, 0, 2)
         res = input_matrix @ kernels.transpose(1, 0)
         out = res.transpose(0, 2, 1).reshape((N, self.out_channels, out_h, out_w))
         return out + self.bias
@@ -50,37 +50,41 @@ class MaxPool2d(Module):
         self.stride = stride if stride is not None else kernel_size
     def __call__(self, x):
         N, C, H, W = x.data.shape
-        K = self.kernel_size
-        out_h, out_w = H // self.stride, W // self.stride
-        res_data = np.zeros((N, C, out_h, out_w))
-        for i in range(out_h):
-            for j in range(out_w):
-                h_s, w_s = i * self.stride, j * self.stride
-                patch = x.data[:, :, h_s:h_s+K, w_s:w_s+K]
-                res_data[:, :, i, j] = np.max(patch, axis=(2, 3))
+        K, S = self.kernel_size, self.stride
+        out_h, out_w = H // S, W // S
+        shape = (N, C, out_h, out_w, K, K)
+        strides = (x.data.strides[0], x.data.strides[1], S*x.data.strides[2], S*x.data.strides[3], x.data.strides[2], x.data.strides[3])
+        patches = np.lib.stride_tricks.as_strided(x.data, shape=shape, strides=strides)
+        res_data = np.max(patches, axis=(4, 5))
         out = Tensor(res_data, (x,), 'maxpool')
         def _backward():
+            mask = (patches == res_data[:, :, :, :, None, None])
+            grad_expanded = out.grad[:, :, :, :, None, None] * mask
             for i in range(out_h):
                 for j in range(out_w):
-                    h_s, w_s = i * self.stride, j * self.stride
-                    patch = x.data[:, :, h_s:h_s+K, w_s:w_s+K]
-                    mask = (patch == res_data[:, :, i, j][:, :, None, None])
-                    x.grad[:, :, h_s:h_s+K, w_s:w_s+K] += mask * out.grad[:, :, i, j][:, :, None, None]
+                    x.grad[:, :, i*S:i*S+K, j*S:j*S+K] += grad_expanded[:, :, i, j, :, :]
         out._backward = _backward
         return out
     def parameters(self): return []
 
 class Flatten(Module):
-    def __call__(self, x):
-        N = x.data.shape[0]
-        return x.reshape((N, -1))
+    def __call__(self, x): return x.reshape((x.data.shape[0], -1))
 
-class MLP(Module):
-    def __init__(self, nin, nouts):
-        sz = [nin] + nouts
-        self.layers = [Linear(sz[i], sz[i+1]) for i in range(len(nouts))]
-    def __call__(self, x):
-        for layer in self.layers:
-            x = layer(x).tanh()
-        return x
-    def parameters(self): return [p for layer in self.layers for p in layer.parameters()]
+def cross_entropy(logits, target_indices):
+    # Numerical stability: subtract max(logits)
+    max_val = Tensor(np.max(logits.data, axis=1, keepdims=True))
+    logits_stable = logits - max_val
+    
+    # LogSumExp
+    sum_exp = logits_stable.exp().sum(axis=1, keepdims=True)
+    log_sum_exp = sum_exp.log()
+    
+    # Negative Log Likelihood
+    log_probs = logits_stable - log_sum_exp
+    
+    N = logits.data.shape[0]
+    target_one_hot = np.zeros_like(logits.data)
+    target_one_hot[np.arange(N), target_indices] = 1.0
+    
+    loss = (Tensor(target_one_hot) * log_probs).sum() * (-1.0 / N)
+    return loss

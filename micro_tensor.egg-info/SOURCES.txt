@@ -13,5 +13,4 @@ microtensor/nn_tensor.py
 microtensor/optim.py
 microtensor/optim_tensor.py
 microtensor/tensor.py
-tests/test_engine.py
 tests/test_tensor_engine.py

@@ -1,4 +1,5 @@
 numpy
+requests
 
 [dev]
 pytest
