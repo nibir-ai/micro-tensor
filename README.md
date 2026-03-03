@@ -27,3 +27,4 @@ The backward pass for matrix multiplication ($Y = XW + b$) is calculated as:
 ```bash
 git clone [https://github.com/nibir-ai/micro-tensor.git](https://github.com/nibir-ai/micro-tensor.git)
 pip install -r requirements.txt
+
