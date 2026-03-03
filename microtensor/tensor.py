@@ -1,8 +1,11 @@
 import numpy as np
 
+# Global precision setting: 'float32' for speed
+DTYPE = np.float32 
+
 class Tensor:
     def __init__(self, data, _children=(), _op='', label=''):
-        self.data = np.array(data, dtype=np.float32)
+        self.data = np.array(data, dtype=DTYPE)
         self.grad = np.zeros_like(self.data)
         self._backward = lambda: None
         self._prev = set(_children)
@@ -108,6 +111,15 @@ class Tensor:
         out._backward = _backward
         return out
 
+    def tanh(self):
+        t = np.tanh(self.data)
+        out = Tensor(t, (self,), 'tanh')
+        def _backward(): 
+            self.grad += (1.0 - t**2) * out.grad
+        out._backward = _backward
+        return out
+
+    # --- Shape Manipulation ---
     def reshape(self, shape):
         out = Tensor(self.data.reshape(shape), (self,), 'reshape')
         def _backward(): self.grad += out.grad.reshape(self.data.shape)
@@ -120,6 +132,7 @@ class Tensor:
         out._backward = _backward
         return out
 
+    # --- Autograd Engine ---
     def backward(self):
         topo, visited = [], set()
         def build_topo(v):
