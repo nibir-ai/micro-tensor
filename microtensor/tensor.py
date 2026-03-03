@@ -15,18 +15,54 @@ class Tensor:
     def __add__(self, other):
         other = other if isinstance(other, Tensor) else Tensor(other)
         out = Tensor(self.data + other.data, (self, other), '+')
+
         def _backward():
-            self.grad += out.grad
-            other.grad += out.grad
+            grad_self = out.grad
+            grad_other = out.grad
+            
+            # Un-broadcast self
+            while len(grad_self.shape) > len(self.data.shape):
+                grad_self = grad_self.sum(axis=0)
+            for i, dim in enumerate(self.data.shape):
+                if dim == 1:
+                    grad_self = grad_self.sum(axis=i, keepdims=True)
+                    
+            # Un-broadcast other
+            while len(grad_other.shape) > len(other.data.shape):
+                grad_other = grad_other.sum(axis=0)
+            for i, dim in enumerate(other.data.shape):
+                if dim == 1:
+                    grad_other = grad_other.sum(axis=i, keepdims=True)
+
+            self.grad += grad_self
+            other.grad += grad_other
+            
         out._backward = _backward
         return out
 
     def __sub__(self, other):
         other = other if isinstance(other, Tensor) else Tensor(other)
         out = Tensor(self.data - other.data, (self, other), '-')
+
         def _backward():
-            self.grad += out.grad
-            other.grad -= out.grad
+            grad_self = out.grad
+            grad_other = -out.grad
+            
+            while len(grad_self.shape) > len(self.data.shape):
+                grad_self = grad_self.sum(axis=0)
+            for i, dim in enumerate(self.data.shape):
+                if dim == 1:
+                    grad_self = grad_self.sum(axis=i, keepdims=True)
+                    
+            while len(grad_other.shape) > len(other.data.shape):
+                grad_other = grad_other.sum(axis=0)
+            for i, dim in enumerate(other.data.shape):
+                if dim == 1:
+                    grad_other = grad_other.sum(axis=i, keepdims=True)
+
+            self.grad += grad_self
+            other.grad += grad_other
+            
         out._backward = _backward
         return out
 
@@ -56,10 +92,8 @@ class Tensor:
         return out
 
     def sum(self):
-        # Sums the entire tensor into a single scalar value
         out = Tensor(np.sum(self.data), (self,), 'sum')
         def _backward():
-            # The gradient of a sum is 1.0 distributed across the entire original shape
             self.grad += np.ones_like(self.data) * out.grad
         out._backward = _backward
         return out
