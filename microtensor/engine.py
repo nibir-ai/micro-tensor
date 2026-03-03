@@ -6,10 +6,10 @@ class Value:
     """
     def __init__(self, data, _children=(), _op='', label=''):
         self.data = data
-        self.grad = 0.0 # The derivative of the loss with respect to this value
-        self._backward = lambda: None # Closure that calculates the local gradient
-        self._prev = set(_children) # Set of nodes that created this node
-        self._op = _op # The operation that produced this node
+        self.grad = 0.0
+        self._backward = lambda: None
+        self._prev = set(_children)
+        self._op = _op
         self.label = label
 
     def __repr__(self):
@@ -23,7 +23,6 @@ class Value:
             self.grad += 1.0 * out.grad
             other.grad += 1.0 * out.grad
         out._backward = _backward
-
         return out
 
     def __mul__(self, other):
@@ -34,7 +33,6 @@ class Value:
             self.grad += other.data * out.grad
             other.grad += self.data * out.grad
         out._backward = _backward
-
         return out
 
     def __pow__(self, other):
@@ -44,7 +42,6 @@ class Value:
         def _backward():
             self.grad += (other * (self.data ** (other - 1))) * out.grad
         out._backward = _backward
-
         return out
 
     def exp(self):
@@ -54,26 +51,40 @@ class Value:
         def _backward():
             self.grad += out.data * out.grad
         out._backward = _backward
-
         return out
 
-    def __radd__(self, other): # other + self
+    def backward(self):
+        topo = []
+        visited = set()
+        def build_topo(v):
+            if v not in visited:
+                visited.add(v)
+                for child in v._prev:
+                    build_topo(child)
+                topo.append(v)
+        build_topo(self)
+
+        self.grad = 1.0
+        for node in reversed(topo):
+            node._backward()
+
+    def __radd__(self, other):
         return self + other
 
-    def __rmul__(self, other): # other * self
+    def __rmul__(self, other):
         return self * other
 
-    def __neg__(self): # -self
+    def __neg__(self):
         return self * -1
 
-    def __sub__(self, other): # self - other
+    def __sub__(self, other):
         return self + (-other)
 
-    def __rsub__(self, other): # other - self
+    def __rsub__(self, other):
         return other + (-self)
 
-    def __truediv__(self, other): # self / other
+    def __truediv__(self, other):
         return self * (other ** -1)
 
-    def __rtruediv__(self, other): # other / self
+    def __rtruediv__(self, other):
         return other * (self ** -1)
