@@ -1,24 +1,21 @@
 from microtensor.tensor import Tensor
-import numpy as np
 
-# A is shape (2, 3)
-A = Tensor([[1.0, 2.0, 3.0], 
-            [4.0, 5.0, 6.0]])
+# Predictions (Shape 2,1)
+y_pred = Tensor([[0.8], 
+                 [-0.5]])
 
-# B is shape (3, 1)
-B = Tensor([[7.0], 
-            [8.0], 
-            [9.0]])
+# Targets (Shape 2,1)
+y_true = Tensor([[1.0], 
+                 [-1.0]])
 
-# Forward Pass: C will be shape (2, 1)
-C = A @ B 
+# Calculate Mean Squared Error using our new operations
+# Loss = sum((y_pred - y_true) ** 2)
+diff = y_pred - y_true
+sq = diff ** 2
+loss = sq.sum()
 
-# Backward Pass
-C.backward()
+# Trigger backprop
+loss.backward()
 
-print("Matrix C Output Data (Should be shape 2,1):")
-print(C.data)
-print("\nGradient of A (Should be shape 2,3):")
-print(A.grad)
-print("\nGradient of B (Should be shape 3,1):")
-print(B.grad)
+print(f"Total Loss:\n{loss.data}")
+print(f"\nGradient of y_pred (How much should predictions change?):\n{y_pred.grad}")
